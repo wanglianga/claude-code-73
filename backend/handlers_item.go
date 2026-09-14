@@ -496,16 +496,21 @@ func handleCreateClaim(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 400, "认领人姓名与电话为必填项")
 		return
 	}
+	if body.VerifyMethod == "id_card" && strings.TrimSpace(body.ClaimantIDCard) == "" {
+		errJSON(w, 400, "身份证核验需填写认领人证件号")
+		return
+	}
 	if body.VerifyMethod == "delegate" && (body.DelegateName == "" || body.DelegateIDCard == "") {
 		errJSON(w, 400, "委托代领需填写被委托人姓名与证件号")
 		return
 	}
+	// 证件号完整入库（供授权站务核验）；脱敏仅在接口读出时进行
 	var claimID int
 	err = db.QueryRow(`INSERT INTO claims(item_id,report_id,claimant_name,claimant_phone,claimant_id_card,verify_method,
 		delegate_name,delegate_id_card,delegate_relation,match_notes,submitted_by)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-		*rep.MatchedItemID, reportID, body.ClaimantName, body.ClaimantPhone, maskIDCard(body.ClaimantIDCard), body.VerifyMethod,
-		body.DelegateName, maskIDCard(body.DelegateIDCard), body.DelegateRelation, body.MatchNotes, u.ID).Scan(&claimID)
+		*rep.MatchedItemID, reportID, body.ClaimantName, body.ClaimantPhone, body.ClaimantIDCard, body.VerifyMethod,
+		body.DelegateName, body.DelegateIDCard, body.DelegateRelation, body.MatchNotes, u.ID).Scan(&claimID)
 	if err != nil {
 		errJSON(w, 500, err.Error())
 		return

@@ -42,6 +42,13 @@ func migrate() {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+	// 数据库会话时区统一为门店本地时区（影响 now()/CURRENT_DATE 及 timestamptz 输出偏移）
+	var dbname string
+	if err := db.QueryRow(`SELECT current_database()`).Scan(&dbname); err == nil && dbname != "" {
+		if _, err := db.Exec(fmt.Sprintf(`ALTER DATABASE %s SET timezone TO 'Asia/Shanghai'`, dbname)); err != nil {
+			log.Printf("set db timezone: %v", err)
+		}
+	}
 	log.Println("schema migrated")
 }
 
@@ -151,7 +158,7 @@ func seed() {
 	// GPS 轨迹 + 刷卡记录（今天 07:00-10:30，每 8 分钟一条）
 	rnd := rand.New(rand.NewSource(42))
 	now := time.Now()
-	base := time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, time.Local)
+	base := time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, appLoc)
 	for _, v := range vehs {
 		names := stops[v.line]
 		for i := 0; i < 40; i++ {
@@ -171,7 +178,7 @@ func seed() {
 	}
 
 	// ---- 演示招领单：李明在 1 路遗失手机（已进入调度排查）----
-	ts := func(h, m int) time.Time { return time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, time.Local) }
+	ts := func(h, m int) time.Time { return time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, appLoc) }
 	var reportID int
 	err = tx.QueryRow(`INSERT INTO lost_reports(report_no,passenger_id,category,description,features,line_id,vehicle_id,vehicle_unknown,
 		board_stop_id,alight_stop_id,ride_start,ride_end,seat_position,contact_name,contact_phone,passenger_id_card,status,next_role,assigned_cs_id)

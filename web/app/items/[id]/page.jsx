@@ -135,6 +135,7 @@ export default function ItemDetail({ params }) {
                   <div className="small muted">{c.claimant_phone} · 证件 {c.claimant_id_card || '—'}</div>
                   <div className="small">核验方式：{VERIFY_METHOD[c.verify_method] || '待核验'}</div>
                   {c.delegate_name && <div className="small">代领人：{c.delegate_name}（{c.delegate_relation || '关系未填'}）证件 {c.delegate_id_card}</div>}
+                  <ClaimCredential claimId={c.id} canView={['station', 'security', 'admin'].includes(user.role)} onViewed={refresh} />
                   {c.match_notes && <div className="small">核验备注:{c.match_notes}</div>}
                   {c.sign_photo && <div className="mt"><span className="small muted">签收照片：</span><Photos urls={[c.sign_photo]} /></div>}
                   {isStation && c.status === 'pending' && (
@@ -173,6 +174,33 @@ export default function ItemDetail({ params }) {
     try { await api(`/api/disposals/${disposalId}/execute`, { method: 'POST' }); refresh(); }
     catch (e) { alert(e.message); }
   }
+}
+
+function ClaimCredential({ claimId, canView, onViewed }) {
+  const [cred, setCred] = useState(null);
+  const [err, setErr] = useState('');
+  if (!canView) return null;
+  if (!cred) {
+    return (
+      <div className="mt">
+        <button className="btn btn-sm btn-ghost" onClick={async () => {
+          setErr('');
+          try {
+            setCred(await api(`/api/claims/${claimId}/credential`));
+            onViewed && onViewed();
+          } catch (e) { setErr(e.message); }
+        }}>查看完整证件（授权核验，留审计）</button>
+        {err && <div className="error-text">{err}</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="alert alert-info small mt">
+      认领人证件：<b>{cred.claimant_id_card || '—'}</b>
+      {cred.delegate_id_card && <>　代领人证件：<b>{cred.delegate_id_card}</b></>}
+      <div className="muted">本次查看已记入审计链</div>
+    </div>
+  );
 }
 
 function ClaimVerify({ claimId, onDone }) {

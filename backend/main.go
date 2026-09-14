@@ -20,6 +20,8 @@ import (
 var (
 	db        *sql.DB
 	jwtSecret []byte
+	// 门店本地时区：全系统统一按 Asia/Shanghai 解析与展示时间
+	appLoc = time.UTC
 )
 
 type User struct {
@@ -219,6 +221,10 @@ func main() {
 	}
 	db = mustConnect()
 	defer db.Close()
+	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
+		appLoc = loc
+		time.Local = loc // 种子数据、巡检等所有本地时间统一门店时区
+	}
 	migrate()
 	seed()
 	go expirySweeper()
@@ -253,6 +259,7 @@ func main() {
 	mux.HandleFunc("POST /api/reports/{id}/match", authed(handleMatchItem))
 	mux.HandleFunc("POST /api/reports/{id}/close", authed(handleCloseReport))
 	mux.HandleFunc("POST /api/reports/{id}/claim", authed(handleCreateClaim))
+	mux.HandleFunc("GET /api/reports/{id}/credential", authed(handleReportCredential))
 
 	// 监控调阅
 	mux.HandleFunc("POST /api/reports/{id}/surveillance", authed(handleCreateSurveillance))
@@ -274,6 +281,7 @@ func main() {
 	mux.HandleFunc("POST /api/claims/{id}/verify", authed(handleVerifyClaim))
 	mux.HandleFunc("POST /api/claims/{id}/reject", authed(handleRejectClaim))
 	mux.HandleFunc("POST /api/claims/{id}/sign", authed(handleSignClaim))
+	mux.HandleFunc("GET /api/claims/{id}/credential", authed(handleClaimCredential))
 
 	// 移交 / 处置 / 报警
 	mux.HandleFunc("POST /api/transfers/{id}/confirm", authed(handleConfirmTransfer))

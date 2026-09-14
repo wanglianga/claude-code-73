@@ -66,7 +66,10 @@ export default function ReportDetail({ params }) {
               <dt>座位位置</dt><dd>{r.seat_position || '—'}</dd>
               {r.is_transfer && (<><dt>换乘</dt><dd>换乘 {r.transfer_line_name || '—'}（{r.transfer_stop || '换乘站不详'}）</dd></>)}
               <dt>联系人</dt><dd>{r.contact_name} · {r.contact_phone}</dd>
-              <dt>身份证件</dt><dd>{r.passenger_id_card || '—'} <span className="muted small">（脱敏展示）</span></dd>
+              <dt>身份证件</dt><dd>
+                {r.passenger_id_card || '—'} <span className="muted small">（脱敏展示）</span>
+                <ReportCredential reportId={r.id} canView={['station', 'security', 'admin'].includes(user.role)} />
+              </dd>
             </dl>
           </Card>
 
@@ -136,6 +139,31 @@ export default function ReportDetail({ params }) {
         <h3><span className="dot" />审计链（查找 / 调阅 / 认领全程留痕）</h3>
         <AuditList audits={data.audits} />
       </div>
+    </div>
+  );
+}
+
+function ReportCredential({ reportId, canView }) {
+  const [cred, setCred] = useState(null);
+  const [err, setErr] = useState('');
+  if (!canView) return null;
+  if (!cred) {
+    return (
+      <>
+        {' '}
+        <button className="btn btn-sm btn-ghost" onClick={async () => {
+          setErr('');
+          try { setCred(await api(`/api/reports/${reportId}/credential`)); }
+          catch (e) { setErr(e.message); }
+        }}>查看原文</button>
+        {err && <div className="error-text">{err}</div>}
+      </>
+    );
+  }
+  return (
+    <div className="alert alert-info small mt">
+      申报人证件原文：<b>{cred.passenger_id_card || '未填写'}</b>
+      <span className="muted">（本次查看已记入审计链）</span>
     </div>
   );
 }

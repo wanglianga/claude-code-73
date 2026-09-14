@@ -219,8 +219,9 @@ func parseDT(s string) *time.Time {
 	if s == "" {
 		return nil
 	}
+	// 浏览器 datetime-local 不带时区，一律按门店本地时区（Asia/Shanghai）解释
 	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02 15:04", time.RFC3339} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+		if t, err := time.ParseInLocation(layout, s, appLoc); err == nil {
 			return &t
 		}
 	}

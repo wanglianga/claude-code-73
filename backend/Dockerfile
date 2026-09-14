@@ -8,9 +8,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/api .
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget \
+RUN apk add --no-cache ca-certificates wget tzdata \
   && adduser -D -u 10001 app \
   && mkdir -p /data/uploads && chown -R app:app /data
+ENV TZ=Asia/Shanghai
 USER app
 WORKDIR /home/app
 COPY --from=build /out/api /home/app/api

@@ -4,6 +4,7 @@ services:
   db:
     image: postgres:16-alpine
     environment:
+      TZ: Asia/Shanghai
       POSTGRES_USER: ${POSTGRES_USER:-lostfound}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lostfound}
       POSTGRES_DB: ${POSTGRES_DB:-lostfound}
@@ -19,6 +20,7 @@ services:
   api:
     build: ./backend
     environment:
+      TZ: Asia/Shanghai
       PORT: 8080
       DATABASE_URL: postgres://${POSTGRES_USER:-lostfound}:${POSTGRES_PASSWORD:-lostfound}@db:5432/${POSTGRES_DB:-lostfound}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
@@ -39,6 +41,7 @@ services:
   web:
     build: ./web
     environment:
+      TZ: Asia/Shanghai
       API_INTERNAL_URL: http://api:8080
     ports:
       - "${CC_PUBLISH_PORT}:3000"
