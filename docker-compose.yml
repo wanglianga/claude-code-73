@@ -1,0 +1,51 @@
+# 城市公交失物招领与监控调阅平台
+# 仅应用服务(web)发布到宿主端口；db / api 仅在内部网络互访
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lostfound}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lostfound}
+      POSTGRES_DB: ${POSTGRES_DB:-lostfound}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # 不发布端口，仅供内部网络访问
+
+  api:
+    build: ./backend
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-lostfound}:${POSTGRES_PASSWORD:-lostfound}@db:5432/${POSTGRES_DB:-lostfound}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    # 不发布端口，仅经 web 反代访问
+
+  web:
+    build: ./web
+    environment:
+      API_INTERNAL_URL: http://api:8080
+    ports:
+      - "${CC_PUBLISH_PORT}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads:

@@ -1,0 +1,38 @@
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+build/
+target/
+coverage/
+
+# Local runtime data
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.cache
+*.db
+*.sqlite*
+.playwright-cli/
+
+# IDE, OS, and local agent state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+CLAUDE.md
+**/memory/
+**/memories/
+**/skill/
+**/skills/
+
+# QA and exported trajectories
+*_traces/
+*.jsonl
+*QA*
+*qa-report*
+playwright-report/
+test-results/
