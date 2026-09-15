@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { api, getUser } from '../../../lib/api';
 import { AuditList, Badge, Card, Err, Loading, Photos, Timeline, Uploader } from '../../../components/ui';
 import { ITEM_STATUS, ITEM_STATUS_COLOR, CLAIM_STATUS, VERIFY_METHOD, DISPOSAL_ACTION, fmtDT, fmtD } from '../../../lib/util';
-
 export default function ItemDetail({ params }) {
   const { id } = params;
   const [user, setUser] = useState(null);
@@ -37,9 +36,18 @@ export default function ItemDetail({ params }) {
         <div className="flex">
           {it.value_level === '贵重' && <Badge color="amber">贵重</Badge>}
           {it.special_type !== '无' && <Badge color="red">{it.special_type}</Badge>}
+          {it.cabinet_locked && <Badge color="blue">🔒 物品柜锁定</Badge>}
+          {it.claim_frozen && <Badge color="red">❄ 认领冻结</Badge>}
           <Badge color={ITEM_STATUS_COLOR[it.status]}>{ITEM_STATUS[it.status]}</Badge>
         </div>
       </div>
+
+      {it.claim_frozen && (
+        <div className="alert alert-danger mb">
+          <b>换班交接异常 · 认领已冻结：</b>{it.lock_reason || '物品柜保持锁定，等待站务主管复核。'}
+          主管复核完成前不得办理认领、核验与签收出库。
+        </div>
+      )}
 
       {it.special_type !== '无' && (
         <div className="alert alert-warn mb"><b>特殊保管规则：</b>{it.storage_rules}</div>
@@ -52,15 +60,18 @@ export default function ItemDetail({ params }) {
               <dt>类别</dt><dd>{it.category}</dd>
               <dt>描述</dt><dd>{it.description}</dd>
               <dt>特征</dt><dd>{it.features || '—'}</dd>
-              <dt>照片</dt><dd><Photos urls={it.photos} /></dd>
+              <dt>照片</dt><dd><ItemPhotoCell user={user} data={data} it={it} refresh={refresh} /></dd>
               <dt>发现位置</dt><dd>{it.line_name || '—'} {it.plate_no || it.stop_name || ''} · {fmtDT(it.found_at)}</dd>
               <dt>上交人</dt><dd>{it.handed_by_role === 'cleaner' ? '保洁' : '司机'} · {it.handed_by_name || '—'}</dd>
-              <dt>存放柜</dt><dd><b>{it.storage_cabinet || '—'}</b></dd>
+              <dt>存放柜</dt><dd><b>{it.storage_cabinet || '—'}</b>{it.cabinet_locked && <> <Badge color="blue">锁定中</Badge></>}</dd>
+              <dt>当前责任人</dt><dd>{it.custodian_name || <span className="muted">—</span>}{it.claim_frozen && <> <Badge color="red">异常待主管复核</Badge></>}</dd>
               <dt>保管期限</dt><dd>{it.retention_days} 天（至 {fmtD(it.retention_until)}）</dd>
               <dt>保管车队</dt><dd>{it.fleet_name || '—'}</dd>
               {it.matched_report_id && (<><dt>关联招领单</dt><dd><Link href={`/reports/${it.matched_report_id}`}>#{it.matched_report_id}</Link></dd></>)}
             </dl>
           </Card>
+
+          <ValuableIntakes user={user} data={data} onDone={refresh} />
 
           {data.alarms && data.alarms.length > 0 && (
             <Card title="联动报警">
@@ -309,5 +320,112 @@ function DisposalForm({ item, onDone }) {
         catch (e) { setErr(e.message); }
       }}>发起处置流程</button>
     </Card>
+  );
+}
+
+// 物品照片：客服在认领前仅必要描述，授权后才能看完整照片/证件
+function ItemPhotoCell({ user, data, it, refresh }) {
+  if (user.role !== 'cs') return <Photos urls={it.photos} />;
+  if (data.valuable?.grant_active) return <SensitiveViewer itemId={it.id} />;
+  return <SensitiveGate itemId={it.id} onDone={refresh} />;
+}
+
+// 入柜照片：客服走授权门，其他角色直接看
+function IntakePhotoCell({ isCs, itemId, urls, count, onDone }) {
+  if (isCs) return <SensitiveGate itemId={itemId} compact onDone={onDone} />;
+  if (urls && urls.length) return <Photos urls={urls} />;
+  return <span className="muted small">共 {count || 0} 张</span>;
+}
+
+// 双人入柜记录（站务+安保：共同拍照、封袋、柜号、会签）
+function ValuableIntakes({ user, data, onDone }) {
+  const intakes = data.valuable?.intakes || [];
+  if (intakes.length === 0) return null;
+  const isCs = user.role === 'cs';
+  return (
+    <Card title="贵重物品双人入柜记录">
+      {intakes.map((v) => (
+        <div key={v.id} className="card mb" style={{ background: '#f8fafc' }}>
+          <div className="between mb">
+            <b>{v.intake_no}</b>
+            <Badge color={v.status === 'completed' ? 'green' : 'amber'}>
+              {v.status === 'completed' ? '安保已会签 · 双人入柜完成' : '待安保会签'}
+            </Badge>
+          </div>
+          <dl className="kv">
+            <dt>柜号</dt><dd><b>{v.cabinet_no}</b></dd>
+            <dt>封袋号</dt><dd>{v.seal_no}（{v.seal_status === 'intact' ? '封袋完好' : v.seal_status}）</dd>
+            <dt>站务</dt><dd>{v.station_name}</dd>
+            <dt>安保会签</dt><dd>{v.security_name || '—'}{v.completed_at ? ` · ${fmtDT(v.completed_at)}` : ''}</dd>
+            {v.notes && <><dt>备注</dt><dd className="small">{v.notes}</dd></>}
+            <dt>站务共同拍照</dt><dd>
+              <IntakePhotoCell isCs={isCs} itemId={data.item.id} urls={v.station_photos} count={v.station_photo_count} onDone={onDone} />
+            </dd>
+            {v.status === 'completed' && (
+              <>
+                <dt>安保会签拍照</dt><dd>
+                  <IntakePhotoCell isCs={isCs} itemId={data.item.id} urls={v.security_photos} count={v.security_photo_count} onDone={onDone} />
+                </dd>
+              </>
+            )}
+          </dl>
+          {v.status === 'pending_countersign' && user.role === 'security' && (
+            <div className="mt"><a className="btn btn-sm" href="/valuable">前往会签</a></div>
+          )}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+// 客服敏感信息门：乘客认领前仅见必要描述，完整照片/证件需申请授权
+function SensitiveGate({ itemId, compact, onDone }) {
+  const [reason, setReason] = useState('');
+  const [err, setErr] = useState('');
+  const [sent, setSent] = useState(false);
+  return (
+    <div className={compact ? '' : 'alert alert-warn'} style={compact ? { border: '1px dashed #fde68a', borderRadius: 8, padding: 8 } : undefined}>
+      <div className="small">🔒 完整照片属敏感信息：乘客认领前客服仅可见必要描述，需申请授权后查看（每次查看留审计）。</div>
+      {sent ? (
+        <div className="small mt">授权申请已提交，等待站务/安保审批。</div>
+      ) : (
+        <div className="mt">
+          <input className="in" placeholder="查看事由（如：与来电乘客核对认领细节）" value={reason} onChange={(e) => setReason(e.target.value)} />
+          {err && <div className="error-text">{err}</div>}
+          <button className="btn btn-sm btn-secondary mt" disabled={!reason.trim()} onClick={async () => {
+            setErr('');
+            try {
+              await api(`/api/items/${itemId}/sensitive/request`, { method: 'POST', body: { reason } });
+              setSent(true); onDone && onDone();
+            } catch (e) { setErr(e.message); }
+          }}>申请授权查看</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 已获授权的客服：点击拉取完整照片/证件（逐次留痕）
+function SensitiveViewer({ itemId }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  if (err) return <div className="error-text">{err}</div>;
+  if (!data) return (
+    <div>
+      <span className="muted small">完整照片已授权可见（逐次查看留痕）</span>
+      <div><button className="btn btn-sm btn-ghost" onClick={async () => {
+        try { setData(await api(`/api/items/${itemId}/sensitive`)); } catch (e) { setErr(e.message); }
+      }}>查看完整照片/证件</button></div>
+    </div>
+  );
+  const all = [...(data.photos || []), ...(data.station_photos || []), ...(data.security_photos || [])];
+  return (
+    <div>
+      <Photos urls={all} />
+      {(data.report_id_cards || []).length > 0 && (
+        <div className="small mt alert-info alert">关联申报证件号：{data.report_id_cards.join('，')}</div>
+      )}
+      <div className="muted small mt">本次查看已记入审计链，授权有效期至 {fmtDT(data.valid_until)}</div>
+    </div>
   );
 }

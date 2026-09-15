@@ -242,3 +242,108 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+
+-- ============ 贵重物品双人入柜 / 换班交接 / 敏感信息授权（增量） ============
+
+-- found_items 增量列：当前责任人（站务）、物品柜锁定、认领冻结
+ALTER TABLE found_items ADD COLUMN IF NOT EXISTS custodian_id INT REFERENCES users(id);
+ALTER TABLE found_items ADD COLUMN IF NOT EXISTS cabinet_locked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE found_items ADD COLUMN IF NOT EXISTS claim_frozen BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE found_items ADD COLUMN IF NOT EXISTS lock_reason TEXT;
+
+-- 贵重物品双人入柜记录：司机上交手机/钱包后，站务与安保共同拍照、封袋、入柜并记录柜号
+CREATE TABLE IF NOT EXISTS valuable_intakes (
+  id SERIAL PRIMARY KEY,
+  intake_no TEXT NOT NULL UNIQUE,
+  item_id INT NOT NULL REFERENCES found_items(id),
+  cabinet_no TEXT NOT NULL,                 -- 柜号
+  seal_no TEXT NOT NULL,                    -- 封袋编号
+  station_id INT NOT NULL REFERENCES users(id),   -- 发起站务
+  station_name TEXT NOT NULL,
+  security_id INT REFERENCES users(id),           -- 会签安保（待会签时为空）
+  security_name TEXT,
+  station_photos TEXT[] NOT NULL DEFAULT '{}',    -- 站务/双人共同拍照
+  security_photos TEXT[] NOT NULL DEFAULT '{}',   -- 安保会签拍照
+  seal_status TEXT NOT NULL DEFAULT 'intact',     -- intact（破损封袋不得入柜）
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_countersign', -- pending_countersign/completed
+  fleet_id INT REFERENCES fleets(id),
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_intake_item ON valuable_intakes(item_id);
+
+-- 站务换班交接
+CREATE TABLE IF NOT EXISTS shift_handovers (
+  id SERIAL PRIMARY KEY,
+  handover_no TEXT NOT NULL UNIQUE,
+  shift_date DATE NOT NULL,
+  from_station_id INT NOT NULL REFERENCES users(id), -- 交班人
+  to_station_id INT NOT NULL REFERENCES users(id),   -- 接班人（交接人）
+  fleet_id INT REFERENCES fleets(id),
+  status TEXT NOT NULL DEFAULT 'pending', -- pending(待核对)/normal(核对正常)/abnormal(有异常待主管复核)/reviewed(异常已复核)
+  check_notes TEXT,
+  abnormal_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  checked_at TIMESTAMPTZ,
+  reviewed_at TIMESTAMPTZ,
+  reviewed_by INT REFERENCES users(id),
+  resolve_notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_handover_status ON shift_handovers(status);
+
+-- 交接核对明细：每件贵重物品一行，交接人逐项核对柜号与封袋状态
+CREATE TABLE IF NOT EXISTS handover_items (
+  id SERIAL PRIMARY KEY,
+  handover_id INT NOT NULL REFERENCES shift_handovers(id) ON DELETE CASCADE,
+  item_id INT NOT NULL REFERENCES found_items(id),
+  cabinet_no TEXT NOT NULL,
+  seal_no TEXT,
+  check_result TEXT NOT NULL DEFAULT 'pending', -- pending/ok/mismatch(柜号不符)/damaged(封袋破损)/missing(物品缺失)
+  notes TEXT,
+  UNIQUE(handover_id, item_id)
+);
+
+-- 站务主管复核任务（交接异常时生成；复核期间物品柜保持锁定、认领冻结）
+CREATE TABLE IF NOT EXISTS review_tasks (
+  id SERIAL PRIMARY KEY,
+  item_id INT REFERENCES found_items(id),
+  handover_id INT REFERENCES shift_handovers(id),
+  type TEXT NOT NULL DEFAULT 'handover_abnormal',
+  title TEXT NOT NULL,
+  detail TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending/resolved
+  resolution TEXT,
+  created_by INT REFERENCES users(id),
+  resolved_by INT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
+
+-- 敏感信息查看授权：乘客认领前，客服默认只能看到必要描述；完整照片/证件需授权查看
+CREATE TABLE IF NOT EXISTS sensitive_grants (
+  id SERIAL PRIMARY KEY,
+  item_id INT NOT NULL REFERENCES found_items(id),
+  requester_id INT NOT NULL REFERENCES users(id),
+  requester_name TEXT NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending/approved/rejected
+  valid_until TIMESTAMPTZ NOT NULL,       -- 授权有效期（默认 4 小时）
+  approver_id INT REFERENCES users(id),
+  approve_notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_grant_lookup ON sensitive_grants(item_id, requester_id, status);
+
+-- 敏感信息实际查看留痕（每次查看都写审计链）
+CREATE TABLE IF NOT EXISTS sensitive_access_logs (
+  id BIGSERIAL PRIMARY KEY,
+  grant_id INT REFERENCES sensitive_grants(id),
+  item_id INT NOT NULL,
+  viewer_id INT NOT NULL REFERENCES users(id),
+  viewer_name TEXT NOT NULL,
+  scope TEXT NOT NULL, -- photos/credentials/full
+  purpose TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

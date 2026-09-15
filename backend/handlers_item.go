@@ -41,6 +41,11 @@ type Item struct {
 	FleetName      string     `json:"fleet_name"`
 	Status         string     `json:"status"`
 	MatchedReportID *int      `json:"matched_report_id"`
+	CustodianID    *int       `json:"custodian_id"`
+	CustodianName  string     `json:"custodian_name"`
+	CabinetLocked  bool       `json:"cabinet_locked"`
+	ClaimFrozen    bool       `json:"claim_frozen"`
+	LockReason     string     `json:"lock_reason"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
@@ -50,21 +55,24 @@ SELECT i.id, i.item_no, i.category, i.description, COALESCE(i.features,''), COAL
  i.found_stop_id, COALESCE(st.name,''), i.found_at,
  COALESCE(i.handed_by_role,''), COALESCE(i.handed_by_name,''),
  COALESCE(i.storage_cabinet,''), i.value_level, i.special_type, i.retention_days, i.retention_until,
- COALESCE(i.storage_rules,''), i.fleet_id, COALESCE(f.name,''), i.status, i.matched_report_id, i.created_at
+ COALESCE(i.storage_rules,''), i.fleet_id, COALESCE(f.name,''), i.status, i.matched_report_id,
+ i.custodian_id, COALESCE(cu.name,''), i.cabinet_locked, i.claim_frozen, COALESCE(i.lock_reason,''), i.created_at
 FROM found_items i
 LEFT JOIN lines l ON l.id=i.found_line_id
 LEFT JOIN vehicles v ON v.id=i.found_vehicle_id
 LEFT JOIN stops st ON st.id=i.found_stop_id
-LEFT JOIN fleets f ON f.id=i.fleet_id`
+LEFT JOIN fleets f ON f.id=i.fleet_id
+LEFT JOIN users cu ON cu.id=i.custodian_id`
 
 func scanItem(s scanner) (*Item, error) {
 	it := &Item{}
-	var lineID, vehID, stopID, fleetID, matchedReport sql.NullInt64
+	var lineID, vehID, stopID, fleetID, matchedReport, custodianID sql.NullInt64
 	var foundAt, retention sql.NullTime
 	err := s.Scan(&it.ID, &it.ItemNo, &it.Category, &it.Description, &it.Features, pq.Array(&it.Photos),
 		&lineID, &it.LineName, &vehID, &it.PlateNo, &stopID, &it.StopName, &foundAt,
 		&it.HandedByRole, &it.HandedByName, &it.StorageCabinet, &it.ValueLevel, &it.SpecialType,
-		&it.RetentionDays, &retention, &it.StorageRules, &fleetID, &it.FleetName, &it.Status, &matchedReport, &it.CreatedAt)
+		&it.RetentionDays, &retention, &it.StorageRules, &fleetID, &it.FleetName, &it.Status, &matchedReport,
+		&custodianID, &it.CustodianName, &it.CabinetLocked, &it.ClaimFrozen, &it.LockReason, &it.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +274,10 @@ func doRegister(u *User, itemID *int, body *registerBody, foundAt time.Time) (in
 	if body.ValueLevel == "" {
 		body.ValueLevel = "普通"
 	}
+	// 手机/钱包/贵重物品必须走「站务+安保」双人入柜流程，不得单人登记入库
+	if isValuableCategory(body.Category, body.ValueLevel) {
+		return 0, fmt.Errorf("手机/钱包/贵重物品须执行双人入柜：站务与安保共同拍照、封袋、入柜并会签（请到「贵重入柜」办理）")
+	}
 	photos := body.Photos
 	if photos == nil {
 		photos = []string{}
@@ -354,6 +366,10 @@ func handleListItems(w http.ResponseWriter, r *http.Request, u *User) {
 	for rows.Next() {
 		it, err := scanItem(rows)
 		if err == nil {
+			// 客服列表默认不含完整照片（认领前仅必要描述，授权后在详情查看）
+			if u.Role == "cs" {
+				it.Photos = []string{}
+			}
 			list = append(list, it)
 		}
 	}
@@ -367,7 +383,24 @@ func handleGetItem(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 404, "物品不存在")
 		return
 	}
+	// 乘客认领前，客服默认只能看到必要描述：完整照片需授权查看（授权后逐次留痕）
+	grantActive, grantID, grantUntil := false, 0, time.Time{}
+	if u.Role == "cs" {
+		if ok, gid, until := hasValidGrant(id, u); ok {
+			grantActive, grantID, grantUntil = true, gid, until
+		} else {
+			it.Photos = []string{} // 无有效授权：隐藏物品照片
+		}
+	}
 	out := map[string]any{"item": it, "events": queryEvents(nil, &id)}
+	out["valuable"] = map[string]any{
+		"intakes":      queryItemValuable(u, id),
+		"grant_active": grantActive,
+		"grant_id":     grantID,
+	}
+	if grantActive {
+		out["valuable"].(map[string]any)["grant_until"] = grantUntil
+	}
 	// 认领单
 	claims := []map[string]any{}
 	crows, _ := db.Query(`SELECT id, report_id, claimant_name, claimant_phone, COALESCE(claimant_id_card,''),
@@ -478,6 +511,12 @@ func handleCreateClaim(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 409, "该招领单尚未匹配到物品")
 		return
 	}
+	// 交接异常冻结认领：物品柜异常锁定期间不得办理认领
+	var frozen bool
+	if err := db.QueryRow(`SELECT claim_frozen FROM found_items WHERE id=$1`, *rep.MatchedItemID).Scan(&frozen); err == nil && frozen {
+		errJSON(w, 409, "该贵重物品因换班交接异常已冻结认领，物品柜保持锁定，待站务主管复核完成后方可认领")
+		return
+	}
 	var body struct {
 		ClaimantName    string `json:"claimant_name"`
 		ClaimantPhone   string `json:"claimant_phone"`
@@ -543,6 +582,17 @@ func handleVerifyClaim(w http.ResponseWriter, r *http.Request, u *User) {
 		MatchNotes   string `json:"match_notes"`
 	}
 	readJSON(r, &body)
+	// 交接异常冻结期间不得核验
+	var frozen bool
+	if err := db.QueryRow(`SELECT COALESCE((SELECT claim_frozen FROM found_items WHERE id=c.item_id),FALSE)
+		FROM claims c WHERE c.id=$1`, id).Scan(&frozen); err != nil {
+		errJSON(w, 404, "认领单不存在")
+		return
+	}
+	if frozen {
+		errJSON(w, 409, "物品柜因换班交接异常锁定、认领已冻结，待站务主管复核完成后再核验")
+		return
+	}
 	var itemID, reportID sql.NullInt64
 	err := db.QueryRow(`UPDATE claims SET status='verified', verify_method=COALESCE(NULLIF($1,''),verify_method),
 		match_notes=COALESCE(NULLIF($2,''),match_notes), verified_by=$3, verified_at=now()
@@ -599,6 +649,16 @@ func handleSignClaim(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	defer tx.Rollback()
+	var frozen bool
+	if err := tx.QueryRow(`SELECT COALESCE((SELECT claim_frozen FROM found_items WHERE id=c.item_id),FALSE)
+		FROM claims c WHERE c.id=$1`, id).Scan(&frozen); err != nil {
+		errJSON(w, 404, "认领单不存在")
+		return
+	}
+	if frozen {
+		errJSON(w, 409, "物品柜因换班交接异常锁定、认领已冻结，待站务主管复核完成后再签收出库")
+		return
+	}
 	var itemID, reportID sql.NullInt64
 	err = tx.QueryRow(`UPDATE claims SET status='signed', sign_photo=$1 WHERE id=$2 AND status='verified' RETURNING item_id, report_id`, body.SignPhoto, id).Scan(&itemID, &reportID)
 	if err != nil {
@@ -992,6 +1052,12 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 		"surveillance_pending":   count(`SELECT count(*) FROM surveillance_requests WHERE status='pending'`),
 		"alarms_open":            count(`SELECT count(*) FROM alarms WHERE status IN ('open','ack')`),
 		"transfers_pending":      count(`SELECT count(*) FROM transfers WHERE status='pending'`),
+		"countersign_pending":    count(`SELECT count(*) FROM valuable_intakes WHERE status='pending_countersign'`),
+		"handovers_pending":      count(`SELECT count(*) FROM shift_handovers WHERE status='pending'`),
+		"handovers_abnormal":     count(`SELECT count(*) FROM shift_handovers WHERE status='abnormal'`),
+		"reviews_pending":        count(`SELECT count(*) FROM review_tasks WHERE status='pending'`),
+		"sensitive_pending":      count(`SELECT count(*) FROM sensitive_grants WHERE status='pending'`),
+		"items_claim_frozen":     count(`SELECT count(*) FROM found_items WHERE claim_frozen=TRUE`),
 	}
 	// 乘客：我的招领单
 	if u.Role == "passenger" {
@@ -1089,11 +1155,153 @@ func handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 		rows.Close()
 		out["searching_reports"] = list
 	}
-	// 安保：待审批调阅 + 未关闭报警
+	// 安保：待审批调阅 + 待会签入柜 + 未关闭报警
 	if u.Role == "security" || u.Role == "admin" {
 		out["surveillance_pending_list"] = querySurveillance(`WHERE s.status='pending'`)
+		out["countersign_todo"] = fetchCountersignTodo()
+	}
+	// 站务：本人保管柜 / 待我接班核对 / 我发起的交接待核对
+	if u.Role == "station" {
+		out["my_vault"] = fetchMyVaultItems(u.ID)
+		out["handover_todo"] = fetchHandoverTodo(u.ID)
+	}
+	// 客服：我的敏感信息授权申请
+	if u.Role == "cs" {
+		out["my_grants"] = fetchMyGrants(u.ID)
+	}
+	// 站务/安保：待审批的敏感信息授权
+	if u.Role == "station" || u.Role == "security" {
+		out["sensitive_todo"] = fetchSensitiveTodo()
+	}
+	// 站务主管：交接异常复核任务 + 敏感授权审批
+	if u.Role == "station_manager" {
+		out["review_todo"] = fetchReviewTodo()
+		out["sensitive_todo"] = fetchSensitiveTodo()
 	}
 	writeJSON(w, 200, out)
+}
+
+// ---- 工作台待办查询（贵重物品模块） ----
+
+func fetchCountersignTodo() []map[string]any {
+	rows, err := db.Query(`SELECT vi.id, vi.item_id, i.item_no, i.description, vi.cabinet_no, vi.seal_no,
+		vi.station_name, vi.created_at FROM valuable_intakes vi JOIN found_items i ON i.id=vi.item_id
+		WHERE vi.status='pending_countersign' ORDER BY vi.id`)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, itemID int
+		var itemNo, desc, cabinet, seal, station string
+		var created time.Time
+		rows.Scan(&id, &itemID, &itemNo, &desc, &cabinet, &seal, &station, &created)
+		list = append(list, map[string]any{"id": id, "item_id": itemID, "item_no": itemNo, "description": desc,
+			"cabinet_no": cabinet, "seal_no": seal, "station_name": station, "created_at": created})
+	}
+	return list
+}
+
+func fetchMyVaultItems(uid int) []map[string]any {
+	rows, err := db.Query(`SELECT i.id, i.item_no, i.description, i.storage_cabinet, i.claim_frozen,
+		v.seal_no FROM found_items i
+		JOIN valuable_intakes v ON v.item_id=i.id AND v.status='completed'
+		WHERE i.custodian_id=$1 AND i.status='in_storage' AND i.claim_frozen=FALSE ORDER BY i.storage_cabinet`, uid)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id int
+		var itemNo, desc, cabinet, seal string
+		var frozen bool
+		rows.Scan(&id, &itemNo, &desc, &cabinet, &frozen, &seal)
+		list = append(list, map[string]any{"id": id, "item_no": itemNo, "description": desc,
+			"cabinet_no": cabinet, "seal_no": seal, "claim_frozen": frozen})
+	}
+	return list
+}
+
+func fetchHandoverTodo(uid int) []map[string]any {
+	rows, err := db.Query(`SELECT h.id, h.handover_no, u1.name, h.status, h.abnormal_count, h.created_at
+		FROM shift_handovers h JOIN users u1 ON u1.id=h.from_station_id
+		WHERE h.to_station_id=$1 AND h.status IN ('pending','abnormal') ORDER BY h.id DESC`, uid)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, abnormal int
+		var no, from, status string
+		var created time.Time
+		rows.Scan(&id, &no, &from, &status, &abnormal, &created)
+		list = append(list, map[string]any{"id": id, "handover_no": no, "from_station": from,
+			"status": status, "abnormal_count": abnormal, "created_at": created})
+	}
+	return list
+}
+
+func fetchMyGrants(uid int) []map[string]any {
+	rows, err := db.Query(`SELECT g.id, i.item_no, g.status, g.reason, g.valid_until, g.created_at
+		FROM sensitive_grants g JOIN found_items i ON i.id=g.item_id
+		WHERE g.requester_id=$1 ORDER BY g.id DESC LIMIT 20`, uid)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id int
+		var itemNo, status, reason string
+		var validUntil, created time.Time
+		rows.Scan(&id, &itemNo, &status, &reason, &validUntil, &created)
+		list = append(list, map[string]any{"id": id, "item_no": itemNo, "status": status, "reason": reason,
+			"valid_until": validUntil, "created_at": created})
+	}
+	return list
+}
+
+func fetchSensitiveTodo() []map[string]any {
+	rows, err := db.Query(`SELECT g.id, g.item_id, i.item_no, i.description, g.requester_name, COALESCE(g.reason,''), g.created_at
+		FROM sensitive_grants g JOIN found_items i ON i.id=g.item_id
+		WHERE g.status='pending' ORDER BY g.id`)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, itemID int
+		var itemNo, desc, requester, reason string
+		var created time.Time
+		rows.Scan(&id, &itemID, &itemNo, &desc, &requester, &reason, &created)
+		list = append(list, map[string]any{"id": id, "item_id": itemID, "item_no": itemNo, "description": desc,
+			"requester_name": requester, "reason": reason, "created_at": created})
+	}
+	return list
+}
+
+func fetchReviewTodo() []map[string]any {
+	rows, err := db.Query(`SELECT t.id, COALESCE(t.item_id,0), COALESCE(i.item_no,''), t.handover_id, t.title, COALESCE(t.detail,''), t.created_at
+		FROM review_tasks t LEFT JOIN found_items i ON i.id=t.item_id
+		WHERE t.status='pending' ORDER BY t.id`)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, itemID, handoverID int
+		var itemNo, title, detail string
+		var created time.Time
+		rows.Scan(&id, &itemID, &itemNo, &handoverID, &title, &detail, &created)
+		list = append(list, map[string]any{"id": id, "item_id": itemID, "item_no": itemNo,
+			"handover_id": handoverID, "title": title, "detail": detail, "created_at": created})
+	}
+	return list
 }
 
 // ---------- 上传 ----------

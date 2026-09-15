@@ -59,7 +59,10 @@ export default function ItemsPage() {
                   <td>{it.category}</td>
                   <td className="small">{it.description.slice(0, 22)}{it.description.length > 22 ? '…' : ''}</td>
                   <td className="small">{it.line_name || '—'} {it.plate_no || it.stop_name || ''}</td>
-                  <td>{it.storage_cabinet || '—'}</td>
+                  <td>{it.storage_cabinet || '—'}
+                    {it.cabinet_locked && <div><Badge color="blue">🔒锁定</Badge></div>}
+                    {it.claim_frozen && <div className="mt"><Badge color="red">❄认领冻结</Badge></div>}
+                  </td>
                   <td>{it.value_level === '贵重' ? <Badge color="amber">贵重</Badge> : '普通'}</td>
                   <td>{it.special_type !== '无' ? <Badge color="red">{it.special_type}</Badge> : '—'}</td>
                   <td className="small">{fmtD(it.retention_until)}</td>

@@ -9,7 +9,7 @@ export function Nav() {
   const [user, setUser] = useState(null);
   useEffect(() => { setUser(getUser()); }, []);
   if (!user) return null;
-  const staff = ['cs', 'station', 'dispatcher', 'security', 'admin'].includes(user.role);
+  const staff = ['cs', 'station', 'dispatcher', 'security', 'station_manager', 'admin'].includes(user.role);
   return (
     <nav className="nav">
       <Link className="brand" href="/dashboard">公交失物招领平台<span>Lost &amp; Found</span></Link>
@@ -20,6 +20,15 @@ export function Nav() {
       {staff && <Link className="navlink" href="/items">物品库</Link>}
       {(user.role === 'station' || user.role === 'admin') && (
         <Link className="navlink" href="/items/new">登记入库</Link>
+      )}
+      {(user.role === 'station' || user.role === 'security' || user.role === 'admin') && (
+        <Link className="navlink" href="/valuable">贵重入柜</Link>
+      )}
+      {(user.role === 'station' || user.role === 'admin') && (
+        <Link className="navlink" href="/handovers">换班交接</Link>
+      )}
+      {(user.role === 'station_manager' || user.role === 'admin') && (
+        <Link className="navlink" href="/reviews">主管复核</Link>
       )}
       <div className="spacer" />
       <span className="who"><b>{user.name}</b>（{ROLES[user.role] || user.role}）</span>

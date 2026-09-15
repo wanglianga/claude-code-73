@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, getUser } from '../../../lib/api';
 import { Card, Err, Photos, Uploader } from '../../../components/ui';
@@ -9,6 +10,7 @@ export default function NewItem() {
   const [user, setUser] = useState(null);
   const [meta, setMeta] = useState(null);
   const [pendingId, setPendingId] = useState(null);
+  const [pendingValuable, setPendingValuable] = useState(false);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
   const [form, setForm] = useState({
@@ -38,11 +40,28 @@ export default function NewItem() {
           found_at: it.found_at ? it.found_at.slice(0, 16) : f.found_at,
           handed_by_role: it.handed_by_role || 'driver', handed_by_name: it.handed_by_name || '',
         }));
+        setPendingValuable(['手机', '钱包'].includes(it.category) || it.value_level === '贵重');
       }).catch((e) => setErr(e.message));
     }
   }, []);
 
   if (!user || !meta) return <div className="container"><div className="empty">加载中…</div></div>;
+
+  const valuableSelected = form.value_level === '贵重' || ['手机', '钱包'].includes(form.category);
+
+  if (pendingValuable) {
+    return (
+      <div className="container" style={{ maxWidth: 720 }}>
+        <Card title="该物品须双人入柜">
+          <div className="alert alert-warn">
+            司机上交的是<b>手机 / 钱包 / 贵重物品</b>，不得由站务单人登记入库。须由
+            <b>站务与安保共同拍照、封袋、入柜并记录柜号</b>，再由安保会签确认。
+          </div>
+          <Link className="btn" href="/valuable/new">前往办理双人入柜</Link>
+        </Card>
+      </div>
+    );
+  }
 
   const line = meta.lines.find((l) => String(l.id) === String(form.found_line_id));
   const lineVehicles = meta.vehicles.filter((v) => String(v.line_id) === String(form.found_line_id));
@@ -55,7 +74,6 @@ export default function NewItem() {
     危险品: '将触发：不入柜，安保暂存 + 紧急报警，3 日内移交公安',
     证件: '将触发：隐私脱敏展示，保管期 90 天，逾期移交公安',
   }[form.category];
-
   async function submit() {
     setErr(''); setOk('');
     try {
@@ -77,6 +95,12 @@ export default function NewItem() {
       <Card title={pendingId ? `完成登记入库（待登记 #${pendingId}）` : '站务登记入库'}>
         {ok && <div className="alert alert-ok">{ok}</div>}
         <Err msg={err} />
+        {valuableSelected && (
+          <div className="alert alert-danger">
+            <b>手机 / 钱包 / 贵重物品不得单人登记入库。</b>
+            须由站务与安保共同拍照、封袋、入柜并会签。<Link href="/valuable/new">前往「贵重物品双人入柜」→</Link>
+          </div>
+        )}
         {specialHint && <div className="alert alert-warn">{specialHint}</div>}
         <div className="form-row-3">
           <label className="f"><span>物品类别 *</span>
@@ -143,7 +167,7 @@ export default function NewItem() {
           </label>
         </div>
         <div className="btn-row">
-          <button className="btn" onClick={submit}>登记入库</button>
+          <button className="btn" disabled={valuableSelected} onClick={submit}>登记入库</button>
         </div>
         <div className="small muted mt">保管期限与保管规则由系统按物品类别自动生成；贵重物品 / 危险品将自动联动安保报警。</div>
       </Card>

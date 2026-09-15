@@ -274,6 +274,12 @@ func main() {
 	mux.HandleFunc("POST /api/items/{id}/register", authed(handleCompleteRegister))
 	mux.HandleFunc("GET /api/items", authed(handleListItems))
 	mux.HandleFunc("GET /api/items/{id}", authed(handleGetItem))
+	mux.HandleFunc("GET /api/items/{id}/valuable", authed(func(w http.ResponseWriter, r *http.Request, u *User) {
+		handleItemValuable(w, r, u, pathID(r))
+	}))
+	mux.HandleFunc("GET /api/items/{id}/sensitive", authed(func(w http.ResponseWriter, r *http.Request, u *User) {
+		handleSensitiveView(w, r, u, pathID(r))
+	}))
 	mux.HandleFunc("POST /api/items/{id}/transfer", authed(handleCreateTransfer))
 	mux.HandleFunc("POST /api/items/{id}/dispose", authed(handleCreateDisposal))
 
@@ -290,6 +296,30 @@ func main() {
 	mux.HandleFunc("GET /api/alarms", authed(handleListAlarms))
 	mux.HandleFunc("POST /api/alarms/{id}/ack", authed(handleAckAlarm))
 	mux.HandleFunc("POST /api/alarms/{id}/close", authed(handleCloseAlarm))
+
+	// 贵重物品双人入柜
+	mux.HandleFunc("POST /api/valuable/intakes", authed(handleValuableIntakeCreate))
+	mux.HandleFunc("GET /api/valuable/intakes", authed(handleValuableIntakeList))
+	mux.HandleFunc("POST /api/valuable/intakes/{id}/countersign", authed(handleValuableCountersign))
+
+	// 敏感信息授权查看（客服认领前仅见必要描述）
+	mux.HandleFunc("POST /api/items/{id}/sensitive/request", authed(handleSensitiveRequest))
+	mux.HandleFunc("GET /api/sensitive/requests", authed(handleSensitiveList))
+	mux.HandleFunc("POST /api/sensitive/{id}/approve", authed(func(w http.ResponseWriter, r *http.Request, u *User) {
+		handleSensitiveApprove(w, r, u, true)
+	}))
+	mux.HandleFunc("POST /api/sensitive/{id}/reject", authed(func(w http.ResponseWriter, r *http.Request, u *User) {
+		handleSensitiveApprove(w, r, u, false)
+	}))
+
+	// 换班交接 / 主管复核
+	mux.HandleFunc("GET /api/handovers/my-vault", authed(handleMyVault))
+	mux.HandleFunc("POST /api/handovers", authed(handleHandoverCreate))
+	mux.HandleFunc("GET /api/handovers", authed(handleHandoverList))
+	mux.HandleFunc("GET /api/handovers/{id}", authed(handleHandoverGet))
+	mux.HandleFunc("POST /api/handovers/{id}/check", authed(handleHandoverCheck))
+	mux.HandleFunc("GET /api/reviews", authed(handleReviewList))
+	mux.HandleFunc("POST /api/reviews/{id}/resolve", authed(handleReviewResolve))
 
 	// 工作台 / 审计
 	mux.HandleFunc("GET /api/dashboard", authed(handleDashboard))

@@ -10,12 +10,20 @@ coverage/
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*credential*
+*secret*
+*token*
+*.local
 *.log
 *.tmp
 *.cache
 *.db
 *.sqlite*
 .playwright-cli/
+cache/
+.cache/
 
 # IDE, OS, and local agent state
 .DS_Store
@@ -23,6 +31,7 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/
+.codex/
 CLAUDE.md
 **/memory/
 **/memories/

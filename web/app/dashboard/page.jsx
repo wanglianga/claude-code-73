@@ -54,7 +54,7 @@ export default function Dashboard() {
       </div>
 
       {user.role === 'passenger' && <PassengerPanel reports={data.my_reports || []} />}
-      {(user.role === 'cs' || user.role === 'admin') && <CsPanel reports={data.active_reports || []} />}
+      {(user.role === 'cs' || user.role === 'admin') && <CsPanel reports={data.active_reports || []} grants={data.my_grants || []} />}
       {user.role === 'driver' && <DriverPanel meta={meta} handins={data.my_handins || []} onDone={refresh} />}
       {(user.role === 'station' || user.role === 'admin') && (
         <StationPanel data={data} onDone={refresh} />
@@ -63,10 +63,14 @@ export default function Dashboard() {
         <DispatcherPanel reports={data.searching_reports || []} />
       )}
       {(user.role === 'security' || user.role === 'admin') && (
-        <SecurityPanel pending={data.surveillance_pending_list || []} alarms={alarms || []} onDone={() => {
+        <SecurityPanel pending={data.surveillance_pending_list || []} alarms={alarms || []}
+          countersign={data.countersign_todo || []} sensitive={data.sensitive_todo || []} onDone={() => {
           refresh();
           api('/api/alarms').then((d) => setAlarms(d.alarms)).catch(() => {});
         }} />
+      )}
+      {user.role === 'station_manager' && (
+        <ManagerPanel reviews={data.review_todo || []} sensitive={data.sensitive_todo || []} onDone={refresh} />
       )}
     </div>
   );
@@ -102,11 +106,30 @@ function PassengerPanel({ reports }) {
   );
 }
 
-function CsPanel({ reports }) {
+function CsPanel({ reports, grants }) {
   return (
-    <Card title="客服工作台 · 进行中的招领单（含查找进度与下一步责任人）">
-      <ReportTable reports={reports} showNext />
-    </Card>
+    <>
+      <Card title="客服工作台 · 进行中的招领单（含查找进度与下一步责任人）">
+        <ReportTable reports={reports} showNext />
+      </Card>
+      {grants.length > 0 && (
+        <Card title="我的敏感信息查看授权申请">
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>事由</th><th>状态</th><th>有效期</th></tr></thead>
+            <tbody>
+              {grants.map((g) => (
+                <tr key={g.id}>
+                  <td>{g.item_no}</td>
+                  <td className="small">{g.reason}</td>
+                  <td>{g.status === 'approved' ? <Badge color="green">已授权</Badge> : g.status === 'rejected' ? <Badge color="red">已拒绝</Badge> : <Badge color="amber">待审批</Badge>}</td>
+                  <td className="small muted">{g.status === 'approved' ? fmtDT(g.valid_until) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </>
   );
 }
 
@@ -231,8 +254,65 @@ function StationPanel({ data, onDone }) {
     try { await api(`/api/transfers/${id}/confirm`, { method: 'POST' }); onDone(); }
     catch (e) { alert(e.message); }
   };
+  const approveGrant = async (id, approve) => {
+    const notes = approve ? '同意客服核对认领信息' : prompt('驳回原因：');
+    if (notes === null) return;
+    try { await api(`/api/sensitive/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: { notes } }); onDone(); }
+    catch (e) { alert(e.message); }
+  };
   return (
     <div className="grid grid-2">
+      <Card title="我名下在柜贵重物品（换班需交接）" extra={<Link className="btn btn-sm btn-secondary" href="/handovers">换班交接</Link>}>
+        {(data.my_vault || []).length === 0 ? <div className="empty">暂无</div> : (
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>柜号</th><th>封袋号</th><th>状态</th></tr></thead>
+            <tbody>
+              {(data.my_vault || []).map((v) => (
+                <tr key={v.id}>
+                  <td><Link href={`/items/${v.id}`}>{v.item_no}</Link><div className="small muted">{v.description.slice(0, 14)}</div></td>
+                  <td><b>{v.cabinet_no}</b></td><td className="small">{v.seal_no || '—'}</td>
+                  <td>{v.claim_frozen ? <Badge color="red">认领冻结</Badge> : <Badge color="blue">柜锁定保管</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+      {(data.handover_todo || []).length > 0 && (
+        <Card title="待我接班核对">
+          <table className="tbl">
+            <thead><tr><th>交接单</th><th>交班人</th><th></th></tr></thead>
+            <tbody>
+              {data.handover_todo.map((h) => (
+                <tr key={h.id}>
+                  <td>{h.handover_no}{h.abnormal_count > 0 && <Badge color="red"> 异常{h.abnormal_count}</Badge>}</td>
+                  <td>{h.from_station}</td>
+                  <td><Link className="btn btn-sm" href={`/handovers/${h.id}`}>去核对</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+      {(data.sensitive_todo || []).length > 0 && (
+        <Card title="客服敏感信息授权审批">
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>申请客服</th><th>事由</th><th></th></tr></thead>
+            <tbody>
+              {data.sensitive_todo.map((g) => (
+                <tr key={g.id}>
+                  <td><Link href={`/items/${g.item_id}`}>{g.item_no}</Link><div className="small muted">{g.description.slice(0, 12)}</div></td>
+                  <td>{g.requester_name}</td><td className="small">{g.reason}</td>
+                  <td className="btn-row">
+                    <button className="btn btn-sm" onClick={() => approveGrant(g.id, true)}>批准(4h)</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => approveGrant(g.id, false)}>驳回</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
       <Card title="待登记入库（司机/保洁已上交）">
         <ItemMiniTable items={data.items_pending_register || []} actionText="去登记" />
       </Card>
@@ -280,10 +360,51 @@ function StationPanel({ data, onDone }) {
   );
 }
 
-function SecurityPanel({ pending, alarms, onDone }) {
+function SecurityPanel({ pending, alarms, countersign, sensitive, onDone }) {
   const act = async (fn) => { try { await fn(); onDone(); } catch (e) { alert(e.message); } };
+  const approveGrant = async (id, approve) => {
+    const notes = approve ? '同意客服核对认领信息' : prompt('驳回原因：');
+    if (notes === null) return;
+    try { await api(`/api/sensitive/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: { notes } }); onDone(); }
+    catch (e) { alert(e.message); }
+  };
   return (
     <div className="grid grid-2">
+      <Card title={`待安保会签 · 双人入柜（${countersign.length}）`} extra={<Link className="btn btn-sm btn-secondary" href="/valuable">入柜记录</Link>}>
+        {countersign.length === 0 ? <div className="empty">暂无待会签</div> : (
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>柜号</th><th>封袋号</th><th>站务</th><th></th></tr></thead>
+            <tbody>
+              {countersign.map((v) => (
+                <tr key={v.id}>
+                  <td><Link href={`/items/${v.item_id}`}>{v.item_no}</Link><div className="small muted">{v.description.slice(0, 12)}</div></td>
+                  <td><b>{v.cabinet_no}</b></td><td>{v.seal_no}</td><td>{v.station_name}</td>
+                  <td><Link className="btn btn-sm" href="/valuable">去会签</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+      {sensitive.length > 0 && (
+        <Card title="客服敏感信息授权审批">
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>申请客服</th><th>事由</th><th></th></tr></thead>
+            <tbody>
+              {sensitive.map((g) => (
+                <tr key={g.id}>
+                  <td><Link href={`/items/${g.item_id}`}>{g.item_no}</Link></td>
+                  <td>{g.requester_name}</td><td className="small">{g.reason}</td>
+                  <td className="btn-row">
+                    <button className="btn btn-sm" onClick={() => approveGrant(g.id, true)}>批准(4h)</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => approveGrant(g.id, false)}>驳回</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
       <Card title="监控调阅待审批">
         {pending.length === 0 ? <div className="empty">暂无待审批申请</div> : (
           <table className="tbl">
@@ -326,6 +447,54 @@ function SecurityPanel({ pending, alarms, onDone }) {
                       const notes = prompt('处置说明：');
                       if (notes !== null) act(() => api(`/api/alarms/${a.id}/close`, { method: 'POST', body: { notes } }));
                     }}>关闭</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ManagerPanel({ reviews, sensitive, onDone }) {
+  const approveGrant = async (id, approve) => {
+    const notes = approve ? '主管批准客服核对认领信息' : prompt('驳回原因：');
+    if (notes === null) return;
+    try { await api(`/api/sensitive/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: { notes } }); onDone(); }
+    catch (e) { alert(e.message); }
+  };
+  return (
+    <div className="grid grid-2">
+      <Card title={`交接异常复核任务（${reviews.length}）`} extra={<Link className="btn btn-sm btn-secondary" href="/reviews">复核中心</Link>}>
+        {reviews.length === 0 ? <div className="empty">暂无待复核任务</div> : (
+          <table className="tbl">
+            <thead><tr><th>任务</th><th></th></tr></thead>
+            <tbody>
+              {reviews.map((t) => (
+                <tr key={t.id}>
+                  <td><div className="alert alert-danger" style={{ margin: 0 }}>🔒 {t.title}<div className="small">{t.detail}</div></div></td>
+                  <td><Link className="btn btn-sm" href="/reviews">去复核</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div className="small muted mt">复核期间物品柜保持锁定、认领冻结；复核完成后由主管解除冻结或升级上报。</div>
+      </Card>
+      <Card title="客服敏感信息授权审批">
+        {sensitive.length === 0 ? <div className="empty">暂无待审批申请</div> : (
+          <table className="tbl">
+            <thead><tr><th>物品</th><th>申请客服</th><th>事由</th><th></th></tr></thead>
+            <tbody>
+              {sensitive.map((g) => (
+                <tr key={g.id}>
+                  <td><Link href={`/items/${g.item_id}`}>{g.item_no}</Link></td>
+                  <td>{g.requester_name}</td><td className="small">{g.reason}</td>
+                  <td className="btn-row">
+                    <button className="btn btn-sm" onClick={() => approveGrant(g.id, true)}>批准</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => approveGrant(g.id, false)}>驳回</button>
                   </td>
                 </tr>
               ))}

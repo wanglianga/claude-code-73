@@ -75,6 +75,11 @@ export default function ReportDetail({ params }) {
 
           {data.matched_item && (
             <Card title="已匹配物品" extra={<Link className="btn btn-sm btn-secondary" href={`/items/${data.matched_item.id}`}>查看物品</Link>}>
+              {data.matched_item.claim_frozen && (
+                <div className="alert alert-danger">
+                  该贵重物品因<b>换班交接异常</b>已冻结认领、物品柜锁定，待站务主管复核完成后方可认领。
+                </div>
+              )}
               <dl className="kv">
                 <dt>编号</dt><dd>{data.matched_item.item_no}</dd>
                 <dt>描述</dt><dd>{data.matched_item.description}</dd>
@@ -131,7 +136,10 @@ export default function ReportDetail({ params }) {
           {user.role === 'admin' && <CsActions r={r} onDone={refresh} />}
           {user.role === 'dispatcher' && meta && <DispatcherActions r={r} meta={meta} surveillance={data.surveillance || []} onDone={refresh} />}
           {user.role === 'station' && r.status !== 'claimed' && r.status !== 'closed_unfound' && <StationMatch r={r} onDone={refresh} />}
-          {user.role === 'passenger' && r.status === 'matched' && <ClaimForm user={user} reportId={r.id} onDone={refresh} />}
+          {user.role === 'passenger' && r.status === 'matched' && !(data.matched_item && data.matched_item.claim_frozen) && <ClaimForm user={user} reportId={r.id} onDone={refresh} />}
+          {user.role === 'passenger' && r.status === 'matched' && data.matched_item && data.matched_item.claim_frozen && (
+            <Card title="申请认领"><div className="alert alert-danger" style={{ margin: 0 }}>该物品柜因换班交接异常锁定、认领冻结中，待站务主管复核完成后将恢复认领，请稍后再试或联系客服。</div></Card>
+          )}
         </div>
       </div>
 

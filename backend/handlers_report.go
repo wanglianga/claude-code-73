@@ -114,12 +114,28 @@ func handleMeta(w http.ResponseWriter, r *http.Request, u *User) {
 		fleets = append(fleets, f)
 	}
 	frows.Close()
+	type Staff struct {
+		ID      int    `json:"id"`
+		Name    string `json:"name"`
+		Role    string `json:"role"`
+		FleetID int    `json:"fleet_id"`
+	}
+	staff := []Staff{}
+	srows2, _ := db.Query(`SELECT id, name, role, COALESCE(fleet_id,0) FROM users WHERE role IN ('station','station_manager','security') ORDER BY role, id`)
+	for srows2.Next() {
+		var s Staff
+		srows2.Scan(&s.ID, &s.Name, &s.Role, &s.FleetID)
+		staff = append(staff, s)
+	}
+	srows2.Close()
 	writeJSON(w, 200, map[string]any{
 		"lines":    lines,
 		"vehicles": vehicles,
 		"fleets":   fleets,
+		"staff":    staff,
 		"categories": []string{"手机", "钱包", "证件", "背包", "儿童物品", "银行卡", "药品", "危险品", "其他"},
 		"cabinets": []string{"A-01", "A-02", "A-03", "B-01", "B-02", "B-03", "C-01", "D-11", "D-12", "冷藏柜-C1", "安保暂存区（不入柜）"},
+		"vault_cabinets": []string{"A-01", "A-02", "A-03", "B-01", "B-02", "B-03", "C-01"},
 	})
 }
 
@@ -394,6 +410,14 @@ func handleGetReport(w http.ResponseWriter, r *http.Request, u *User) {
 		if rep.PassengerID == nil || *rep.PassengerID != u.ID {
 			errJSON(w, 403, "无权查看该招领单")
 			return
+		}
+	}
+	// 乘客认领前，客服默认只见必要描述：匹配物品的完整照片需授权查看
+	if u.Role == "cs" {
+		if mi, ok := out["matched_item"].(*Item); ok {
+			if active, _, _ := hasValidGrant(mi.ID, u); !active {
+				mi.Photos = []string{}
+			}
 		}
 	}
 	writeJSON(w, 200, out)

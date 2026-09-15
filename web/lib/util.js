@@ -1,6 +1,6 @@
 export const ROLES = {
   passenger: '乘客', cs: '客服', driver: '司机', station: '站务',
-  dispatcher: '调度', security: '安保', admin: '管理员', system: '系统',
+  dispatcher: '调度', security: '安保', station_manager: '站务主管', admin: '管理员', system: '系统',
 };
 
 export const REPORT_STATUS = {
@@ -29,6 +29,17 @@ export const SURV_STATUS = { pending: '待审批', approved: '已批准', reject
 export const VERIFY_METHOD = { id_card: '身份证核验', description: '描述匹配', delegate: '委托代领' };
 export const DISPOSAL_ACTION = { transfer_out: '移交公安机关', destroy: '销毁', donate: '捐赠' };
 export const ALARM_TYPE = { valuable: '贵重物品', danger: '危险品' };
+
+export const INTAKE_STATUS = { pending_countersign: '待安保会签', completed: '双人入柜完成' };
+export const HANDOVER_STATUS = {
+  pending: '待接班核对', normal: '核对正常', abnormal: '异常·待主管复核', reviewed: '异常已复核',
+};
+export const HANDOVER_STATUS_COLOR = { pending: 'amber', normal: 'green', abnormal: 'red', reviewed: 'blue' };
+export const CHECK_RESULT = { pending: '待核对', ok: '核对正常', mismatch: '柜号不符', damaged: '封袋破损', missing: '物品缺失' };
+export const CHECK_RESULT_COLOR = { pending: 'gray', ok: 'green', mismatch: 'red', damaged: 'red', missing: 'red' };
+export const GRANT_STATUS = { pending: '待审批', approved: '已授权', rejected: '已拒绝' };
+export const GRANT_STATUS_COLOR = { pending: 'amber', approved: 'green', rejected: 'red' };
+export const REVIEW_STATUS = { pending: '待主管复核', resolved: '已复核' };
 
 // 门店本地时区：全站时间统一按此时区展示，与浏览器所在时区无关
 export const STORE_TZ = 'Asia/Shanghai';
